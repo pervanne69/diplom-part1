@@ -1,0 +1,7 @@
+pip~=23.2.1
+typing_extensions~=4.15.0
+numpy~=2.2.6
+setuptools~=68.2.0
+fsspec~=2025.9.0
+packaging~=25.0
+wheel~=0.41.2
