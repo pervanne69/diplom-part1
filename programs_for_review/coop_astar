@@ -1,22 +1,8 @@
-# coop_astar.py
-# Реализация Cooperative A* (простая версия) для дискретной 2D-сетки.
-
 import heapq
 from typing import List, Tuple, Dict, Set, Optional
 
-# Описание ключевых глобальных переменных (переменные модуля)
-# MOVES - список допустимых перемещений агента (dx, dy).
-# Включает ожидание на месте (0,0).
-# Формат: List[Tuple[int, int]]
 MOVES = [(0, 1), (0, -1), (1, 0), (-1, 0), (0, 0)]
 
-# Типы данных, используемые в этом модуле:
-# Grid: List[List[int]]       - двумерный список, 0 = проходимая клетка, 1 = препятствие
-# Pos: Tuple[int, int]       - координата (x, y)
-# AgentSpec: Dict            - описание агента: {"id": int, "start": [x,y], "goal": [x,y]}
-# Reserved: Dict[int, Set[Pos]] - словарь резервирований: время -> множество занятых позиций
-
-# Вспомогательные функции
 def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> int:
     """
     Наименование: heuristic
@@ -27,7 +13,6 @@ def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> int:
     Возвращаемое значение:
         int - значение эвристики (Манхэттенское расстояние).
     """
-    # Манхэттенова дистанция: |dx| + |dy|
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
@@ -43,7 +28,6 @@ def in_bounds(pos: Tuple[int, int], width: int, height: int) -> bool:
         bool - True, если позиция внутри границ, иначе False.
     """
     x, y = pos
-    # проверка по границам: 0 <= x < width, 0 <= y < height
     return 0 <= x < width and 0 <= y < height
 
 
@@ -58,7 +42,6 @@ def is_free(grid: List[List[int]], pos: Tuple[int, int]) -> bool:
         bool - True, если клетка свободна (0), иначе False.
     """
     x, y = pos
-    # В сетке grid индексование: grid[row][col] где row == y, col == x
     return grid[y][x] == 0
 
 
@@ -73,12 +56,11 @@ def reconstruct(came_from: Dict[Tuple[int, int, int], Tuple[int, int, int]],
     Возвращаемое значение:
         List[Tuple[int,int]] - список позиций (x,y) по временам от старта до цели.
     """
-    path = [ (current[0], current[1]) ]  # начнём с текущей позиции (x,y)
-    # Переходим по цепочке came_from, пока есть предок
+    path = [(current[0], current[1])]
     while current in came_from:
-        current = came_from[current]    # текущий узел = предок
-        path.append((current[0], current[1]))  # добавляем позицию (x,y)
-    path.reverse()  # переворачиваем, чтобы получить путь от старта к цели
+        current = came_from[current]
+        path.append((current[0], current[1]))
+    path.reverse()
     return path
 
 
@@ -103,75 +85,37 @@ def a_star_time_expanded(grid: List[List[int]],
         - Функция использует простую обработку вершинных резервов (vertex reservations).
         - Edge-reservation (запрет на обмен позициями) не реализован в полной мере в этой версии.
     """
-    # размеры сетки
     width = len(grid[0])
     height = len(grid)
-
-    # начальный узел: (x, y, t=0)
     start_node = (start[0], start[1], 0)
-
-    # Приоритетная очередь открытых узлов: элементы (f, g, node)
     openpq: List[Tuple[int, int, Tuple[int, int, int]]] = []
-    # помещаем стартовый узел в очередь с f = heuristic(start, goal), g = 0
     heapq.heappush(openpq, (heuristic((start[0], start[1]), (goal[0], goal[1])), 0, start_node))
-
-    # came_from для восстановления пути: node -> parent_node
     came_from: Dict[Tuple[int, int, int], Tuple[int, int, int]] = {}
+    gscore: Dict[Tuple[int, int, int], int] = {start_node: 0}
 
-    # gscore: стоимость пути от старта до данного узла (node) — словарь
-    gscore: Dict[Tuple[int, int, int], int] = { start_node: 0 }
-
-    # основной цикл A*
     while openpq:
-        f, g, node = heapq.heappop(openpq)  # достаём узел с минимальным f
-        x, y, t = node                       # распаковываем координаты и время
-
-        # если текущая позиция совпала с целью (игнорируем время) — нашли путь
+        f, g, node = heapq.heappop(openpq)
+        x, y, t = node
         if (x, y) == (goal[0], goal[1]):
-            # восстанавливаем маршрут (список (x,y) по временам)
             return reconstruct(came_from, node)
-
-        # если превысили лимит по времени, пропускаем
         if t >= max_t:
-            # пропустить расширение этого состояния
             continue
-
-        # расширяем соседние состояния (включая ожидание на месте)
         for dx, dy in MOVES:
-            nx, ny = x + dx, y + dy  # новая позиция
-            nt = t + 1               # новое время (всегда +1)
-
-            # проверка границ сетки
+            nx, ny = x + dx, y + dy
+            nt = t + 1
             if not in_bounds((nx, ny), width, height):
-                # позиция выходит за границы — пропускаем
                 continue
-
-            # проверка, что клетка проходима (нет препятствия)
             if not is_free(grid, (nx, ny)):
-                # препятствие — нельзя попасть
                 continue
-
-            # проверка вершинной резервировки: занятие клетки в момент nt
             if nt in reserved and (nx, ny) in reserved[nt]:
-                # клетка уже занята в момент nt другим агентом — запрещено
                 continue
-
-            # NOTE: здесь можно добавить проверку edge-reservation (swap)
-            # пример: запрещать переход (x,y)->(nx,ny), если кто-то в reserved насыщает противоположный переход
-            # в этой упрощённой версии edge-reservation не реализовано полностью
-
-            neigh = (nx, ny, nt)  # соседний узел в пространстве-времени
-            tentative_g = gscore[node] + 1  # стоимость до соседа = текущая + 1
-
-            # если найден более короткий путь до neigh — обновляем
+            neigh = (nx, ny, nt)
+            tentative_g = gscore[node] + 1
             if tentative_g < gscore.get(neigh, 10**9):
-                gscore[neigh] = tentative_g            # сохраняем новую g
-                came_from[neigh] = node                # сохраняем предка для восстановления
-                fscore = tentative_g + heuristic((nx, ny), (goal[0], goal[1]))  # f = g + h
-                # пушим в очередь с приоритетом f
+                gscore[neigh] = tentative_g
+                came_from[neigh] = node
+                fscore = tentative_g + heuristic((nx, ny), (goal[0], goal[1]))
                 heapq.heappush(openpq, (fscore, tentative_g, neigh))
-
-    # если очередь пуста и путь не найден — возвращаем None
     return None
 
 
@@ -197,49 +141,26 @@ def cooperative_a_star(grid: List[List[int]],
         - Для корректной обработки swap-collisions (edge collisions) и динамического перепланирования
           потребуются доработки (edge-reservations, повторная попытка с изменением порядка планирования и т.д.).
     """
-    # reserved: словарь временной резервации
-    # ключ: t (int) -> значение: set((x,y)) занятых позиций в момент t
     reserved: Dict[int, Set[Tuple[int, int]]] = {}
-
-    # plans: результирующий словарь путей для агентов
     plans: Dict[int, List[Tuple[int, int]]] = {}
-
-    # переменная для хранения максимальной длины пути среди всех агентов
     max_path_len = 0
 
-    # последовательно планируем маршрут для каждого агента в заданном порядке
     for ag in agents:
-        agent_id = ag["id"]       # идентификатор агента
-        start = ag["start"]       # старт [x,y]
-        goal = ag["goal"]         # цель [x,y]
-
-        # вызываем A* в пространстве-времени с учётом текущих резервов
+        agent_id = ag["id"]
+        start = ag["start"]
+        goal = ag["goal"]
         path = a_star_time_expanded(grid, start, goal, reserved, max_t=1000)
-
         if path is None:
-            # путь не найден: в этой упрощённой стратегии оставляем агента ждать на старте
-            # альтернативы: пробовать переставить порядок планирования, запускать replanning и т.д.
-            path = [ (start[0], start[1]) ]
-
-        # резервируем занятые клетки на временной оси по найденному пути
+            path = [(start[0], start[1])]
         for t, pos in enumerate(path):
-            # reserved.setdefault(t, set()) — создаём множество, если ещё не создано
             reserved.setdefault(t, set()).add(tuple(pos))
-
-        # сохраняем план для данного агента
         plans[agent_id] = path
-
-        # обновляем максимальную длину пути
         if len(path) > max_path_len:
             max_path_len = len(path)
 
-    # Для удобства выполнения симуляции удобно выровнять все планы по длине:
-    # короткие пути дополняем ожиданием на цели (wait on goal), чтобы у всех агентов
-    # был одинаковый размер списка состояний по времени.
     for aid, p in plans.items():
         if len(p) < max_path_len:
-            goalpos = p[-1]  # позиция ожидания (последняя позиция в пути)
-            # создаём расширённую версию пути путем добавления goalpos до длины max_path_len
+            goalpos = p[-1]
             p_extended = p + [goalpos] * (max_path_len - len(p))
             plans[aid] = p_extended
 

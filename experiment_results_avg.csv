@@ -1,0 +1,7 @@
+obstacle_prob,agents,planner,avg_soc,avg_makespan,avg_runtime,runs
+0.05,3,cooperative,90.0,30.0,0.0017,3
+0.05,3,prioritized,90.0,30.0,0.0017,3
+0.05,3,cbs,86.0,30.0,0.5521,3
+0.05,5,cooperative,150.0,30.0,0.0022,3
+0.05,5,prioritized,150.0,30.0,0.0023,3
+0.05,5,cbs,136.67,30.0,0.3694,3
