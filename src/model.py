@@ -1,95 +1,70 @@
 from mesa import Model
 from mesa.time import SimultaneousActivation
 from mesa.space import MultiGrid
-from .agent import RobotAgent
+from .agent import RobotAgent, Obstacle
 from .coop_astar import cooperative_a_star
 from .prioritized_planning import prioritized_planning
 from .cbs import cbs
-import json
-from typing import Dict, List, Tuple
+from .map_generator import generate_grid
+import random
+from typing import List
 
 class GridMASModel(Model):
     """
-        Наименование: GridMASModel
-        Назначение:
-            Описывает симуляционную модель мультиагентной системы (МАС),
-            работающей на двумерной сетке. Модель загружает сценарий,
-            создаёт агентов, рассчитывает маршруты с помощью Cooperative A*,
-            размещает роботов в начальных позициях и выполняет симуляцию.
-
-        Входные параметры:
-            scenario_path (str) — путь к JSON-файлу сценария, содержащему:
-                - grid (2D-массив 0/1) — карту препятствий;
-                - agents — список агентов: id, start, goal.
-
-        Атрибуты:
-            width (int) — ширина сетки.
-            height (int) — высота сетки.
-            grid_map (List[List[int]]) — карта препятствий.
-            grid (MultiGrid) — сетка Mesa для размещения агентов.
-            schedule (SimultaneousActivation) — планировщик действий Mesa.
-            agents_list (List[RobotAgent]) — список всех созданных агентов.
-            running (bool) — флаг продолжения симуляции.
-
-        Поведение:
-            - При инициализации загружает сценарий, создаёт агентов,
-              рассчитывает пути и размещает их на сетке.
-            - В методе step() выполняется один шаг симуляции.
+    Динамическая симуляционная модель мультиагентной системы.
+    Генерация препятствий и маршрутов агентов происходит при каждом запуске.
     """
 
-    def __init__(self, scenario_path: str, planner: str = "prioritized", pp_priority: str = "id"):
+    def __init__(self, width=20, height=15, num_agents=3,
+                 obstacle_prob=0.15, planner="prioritized",
+                 pp_priority="id", seed=None):
         super().__init__()
+        self.width = width
+        self.height = height
+        self.num_agents = num_agents
+        self.planner = planner
+        self.pp_priority = pp_priority
+        self.seed = seed
 
-        with open(scenario_path, "r") as f:
-            data = json.load(f)
+        # Фиксируем seed для воспроизводимости
+        if seed is not None:
+            random.seed(seed)
 
-        # Двумерная карта сетки (0 - свободно, 1 - препятствие)
-        grid_map: List[List[int]] = data["grid"]
-
-        # Размеры сетки
-        self.width: int = len(grid_map[0])
-        self.height: int = len(grid_map)
-
-        # сохраняем карту как атрибут модели
-        self.grid_map: List[List[int]] = grid_map
+        # Генерация карты препятствий
+        self.grid_map = generate_grid(width, height, obstacle_prob, seed)
 
         # Создаём сетку Mesa
-        # MultiGrid позволяет размещать несколько агентов в одной ячейке
-        # (в этом проекте можно разрешить совместное пребывание для простоты)
-        self.grid = MultiGrid(self.width, self.height, torus=False)
+        self.grid = MultiGrid(width, height, torus=False)
 
-        # Планировщик шагов — SimultaneousActivation выполняет step() у всех агентов одновременно
+        # Планировщик шагов
         self.schedule = SimultaneousActivation(self)
 
-        # Список агнетов
+        # Размещение препятствий на сетке
+        for y in range(height):
+            for x in range(width):
+                if self.grid_map[y][x] == 1:
+                    obs = Obstacle((x, y), self)
+                    self.grid.place_agent(obs, (x, y))
+
+        # Создание агентов
         self.agents_list: List[RobotAgent] = []
-
-        # Создание агентов по сценарию
-        for agent_info in data["agents"]:
-            agent = RobotAgent(
-                unique_id=agent_info["id"],
-                model=self,
-                start=agent_info["start"],
-                goal=agent_info["goal"]
-            )
-
-            # Добавляем в список
+        agents_info = []
+        for a in range(num_agents):
+            start = self._get_random_free_cell()
+            goal = self._get_random_free_cell()
+            agent = RobotAgent(unique_id=a, model=self, start=start, goal=goal)
             self.agents_list.append(agent)
-
-            # Регистрируем агента у планировщика
             self.schedule.add(agent)
+            self.grid.place_agent(agent, tuple(start))
+            agents_info.append({"id": a, "start": start, "goal": goal})
 
-            # Размещаем агента на сетке в начальной точке
-            x, y = agent_info["start"]
-            self.grid.place_agent(agent, (x, y))
-
-        # Инициализация маршрутов агентов через Cooperative A*
+        # Планирование маршрутов
         if planner == "prioritized":
-            plans = prioritized_planning(self.grid_map, data["agents"], priority=pp_priority)
+            plans = prioritized_planning(self.grid_map, agents_info, priority=pp_priority)
         elif planner == "cbs":
-            plans = cbs(self.grid_map, data["agents"])
+            plans = cbs(self.grid_map, agents_info)
         else:
-            plans = cooperative_a_star(self.grid_map, data["agents"])
+            plans = cooperative_a_star(self.grid_map, agents_info)
 
         # Присваиваем каждому агенту его маршрут
         for agent in self.agents_list:
@@ -98,31 +73,19 @@ class GridMASModel(Model):
             agent.finished = (agent.start == agent.goal)
 
         # Флаг продолжающейся симуляции
-        self.running: bool = True
+        self.running = True
 
-    # Основной шаг симуляции
-    def step(self) -> None:
-        """
-        Наименование: step
-        Назначение:
-            Выполняет один шаг симуляции:
-            - вызывает step() у всех агентов через планировщик,
-            - проверяет, завершили ли движение все агенты.
+    def _get_random_free_cell(self):
+        """Находит случайную свободную клетку на карте"""
+        while True:
+            x = random.randint(0, self.width - 1)
+            y = random.randint(0, self.height - 1)
+            # свободная клетка без препятствия и без агента
+            if self.grid_map[y][x] == 0 and not any(isinstance(a, RobotAgent) for a in self.grid.get_cell_list_contents((x, y))):
+                return [x, y]
 
-        Входные параметры:
-            отсутствуют.
-
-        Возвращаемое значение:
-            None
-        """
-
-        # Выполняем шаг для всех агентов
+    def step(self):
+        """Выполняет один шаг симуляции"""
         self.schedule.step()
-
-        # Проверяем, достигли ли все цели
-        all_completed = all(agent.finished for agent in self.agents_list)
-
-        # Если все движения завершены - останавливаем симуляцию
-        if all_completed:
+        if all(agent.finished for agent in self.agents_list):
             self.running = False
-

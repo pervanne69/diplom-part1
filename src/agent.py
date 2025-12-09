@@ -2,6 +2,13 @@ from mesa import Agent
 from typing import List, Tuple
 
 
+class Obstacle(Agent):
+    def __init__(self, pos, model):
+        super().__init__("obs_" + str(pos), model)
+        self.pos = pos
+        self.agent_type = "obstacle"
+
+
 class RobotAgent(Agent):
     """
         Наименование: RobotAgent

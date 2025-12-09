@@ -8,26 +8,24 @@ from mesa.visualization.modules import TextElement
 from src.model import GridMASModel
 
 def agent_portrayal(agent):
-    """
-        Наименование: agent_portrayal
-        Назначение:
-            Формирует словарь свойств (portrayal) для визуализации агента
-            на холсте CanvasGrid Mesa.
-
-        Входные параметры:
-            agent (RobotAgent) — объект агента.
-
-        Возвращаемое значение:
-            dict — параметры отрисовки агента.
-    """
     if agent is None:
         return
 
-    # Цвета агента в зависимости от завершенности
+    # === Препятствия ===
+    if hasattr(agent, "agent_type") and agent.agent_type == "obstacle":
+        return {
+            "Shape": "rect",
+            "w": 1.0,
+            "h": 1.0,
+            "Filled": "true",
+            "Layer": 0,
+            "Color": "black"
+        }
+
+    # === Роботы ===
     color = "green" if agent.finished else "red"
 
-    # Описание отрисовки агента в ячейке сетки
-    portrayal = {
+    return {
         "Shape": "rect",
         "w": 0.9,
         "h": 0.9,
@@ -36,8 +34,7 @@ def agent_portrayal(agent):
         "Color": color,
         "text": str(agent.unique_id),
         "text_color": "white"
-        }
-    return portrayal
+    }
 
 
 class MapInfo(TextElement):
@@ -60,36 +57,32 @@ class MapInfo(TextElement):
 
         return f"Агенты: {completed}/{total} завершили маршрут"
 
-def build_server(scenario_path: str):
+def build_server():
     """
-        Наименование: build_server
-        Назначение:
-            Создание и конфигурация веб-сервера Mesa,
-            отображающего 2D-сетку и состояние агентов.
-
-        Входные параметры:
-            scenario_path (str) — путь к JSON-сценарию.
-
-        Возвращаемое значение:
-            ModularServer — готовый объект сервера Mesa.
+    Создание и конфигурация веб-сервера Mesa
+    с динамическими препятствиями и маршрутами агентов.
     """
-
-    # Создаём объект CanvasGrid:
-    #  - agent_portrayal — функция визуализации агента
-    #  - размеры сетки будут автоматически получены из модели
-
     grid_canvas = CanvasGrid(
         agent_portrayal,
-        20,
-        20,
+        20,  # ширина сетки
+        15,  # высота сетки
         600,
-        600
+        450
     )
+
     server = ModularServer(
         GridMASModel,
         [grid_canvas, MapInfo()],
         "Multi-Agent Grid Simulation",
-        {"scenario_path": scenario_path}
+        {
+            "width": 20,
+            "height": 15,
+            "num_agents": 3,
+            "obstacle_prob": 0.18,
+            "planner": "prioritized",
+            "pp_priority": "id",
+            "seed": None  # Можно поставить число для фиксированной карты
+        }
     )
 
     server.port = 8521
@@ -97,8 +90,5 @@ def build_server(scenario_path: str):
 
 
 if __name__ == "__main__":
-    scenario = "scenarios/sample_map.json"
-
-    server = build_server(scenario)
-
+    server = build_server()
     server.launch()
