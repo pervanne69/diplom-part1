@@ -21,7 +21,7 @@ class GridMASModel(Model):
         width=20,
         height=15,
         num_agents=3,
-        num_tasks=5,
+        num_tasks=10,
         obstacle_prob=0.15,
         planner="prioritized",
         pp_priority="id",
