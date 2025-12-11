@@ -1,0 +1,5 @@
+Mesa~=1.2.1
+scipy~=1.15.3
+pandas~=2.3.3
+matplotlib~=3.10.7
+numpy~=2.2.6

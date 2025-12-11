@@ -1,23 +1,35 @@
 from mesa import Model
 from mesa.time import SimultaneousActivation
 from mesa.space import MultiGrid
-from .agent import RobotAgent, Obstacle
+from mesa.datacollection import DataCollector
+
+import random
+from typing import List, Tuple
+
+from .agent import RobotAgent, Obstacle, Task
+from .map_generator import generate_grid
+
+from .task_allocation import hungarian_assignment, greedy_assignment, cbba_assignment, assignment_to_tasks
 from .coop_astar import cooperative_a_star
 from .prioritized_planning import prioritized_planning
 from .cbs import cbs
-from .map_generator import generate_grid
-import random
-from typing import List
+
 
 class GridMASModel(Model):
-    """
-    Динамическая симуляционная модель мультиагентной системы.
-    Генерация препятствий и маршрутов агентов происходит при каждом запуске.
-    """
-
-    def __init__(self, width=20, height=15, num_agents=3,
-                 obstacle_prob=0.15, planner="prioritized",
-                 pp_priority="id", seed=None):
+    def __init__(
+        self,
+        width=20,
+        height=15,
+        num_agents=3,
+        num_tasks=5,
+        obstacle_prob=0.15,
+        planner="prioritized",
+        pp_priority="id",
+        seed=None,
+        mrta_method="hungarian",
+        dynamic_tasks=True,
+        task_spawn_prob=0.02
+    ):
         super().__init__()
         self.width = width
         self.height = height
@@ -25,67 +37,128 @@ class GridMASModel(Model):
         self.planner = planner
         self.pp_priority = pp_priority
         self.seed = seed
+        self.mrta_method = mrta_method
+        self.dynamic_tasks = dynamic_tasks
+        self.task_spawn_prob = task_spawn_prob
 
-        # Фиксируем seed для воспроизводимости
         if seed is not None:
             random.seed(seed)
 
-        # Генерация карты препятствий
         self.grid_map = generate_grid(width, height, obstacle_prob, seed)
-
-        # Создаём сетку Mesa
         self.grid = MultiGrid(width, height, torus=False)
-
-        # Планировщик шагов
         self.schedule = SimultaneousActivation(self)
 
-        # Размещение препятствий на сетке
+        # Препятствия
         for y in range(height):
             for x in range(width):
                 if self.grid_map[y][x] == 1:
                     obs = Obstacle((x, y), self)
                     self.grid.place_agent(obs, (x, y))
 
-        # Создание агентов
+        # Задачи
+        self.tasks: List[Task] = []
+        for tid in range(num_tasks):
+            pos = self._get_random_free_cell()
+            task = Task(tid, pos, self)
+            self.tasks.append(task)
+            self.grid.place_agent(task, pos)
+
+        # Агенты
         self.agents_list: List[RobotAgent] = []
-        agents_info = []
-        for a in range(num_agents):
+        for agent_id in range(num_agents):
             start = self._get_random_free_cell()
-            goal = self._get_random_free_cell()
-            agent = RobotAgent(unique_id=a, model=self, start=start, goal=goal)
-            self.agents_list.append(agent)
-            self.schedule.add(agent)
-            self.grid.place_agent(agent, tuple(start))
-            agents_info.append({"id": a, "start": start, "goal": goal})
+            ag = RobotAgent(agent_id, self, start)
+            self.agents_list.append(ag)
+            self.schedule.add(ag)
+            self.grid.place_agent(ag, start)
 
-        # Планирование маршрутов
-        if planner == "prioritized":
-            plans = prioritized_planning(self.grid_map, agents_info, priority=pp_priority)
-        elif planner == "cbs":
-            plans = cbs(self.grid_map, agents_info)
-        else:
-            plans = cooperative_a_star(self.grid_map, agents_info)
+        # MRTA
+        self._assign_tasks()
 
-        # Присваиваем каждому агенту его маршрут
-        for agent in self.agents_list:
-            agent.path = plans.get(agent.unique_id, [agent.start])
-            agent.path_step = 0
-            agent.finished = (agent.start == agent.goal)
+        # MAPF
+        self._compute_paths()
 
-        # Флаг продолжающейся симуляции
+        # DataCollector
+        self.datacollector = DataCollector(
+            model_reporters={
+                "SoC": lambda m: sum(len(a.path) for a in m.agents_list),
+                "Makespan": lambda m: max((len(a.path) for a in m.agents_list), default=0),
+                "RemainingTasks": lambda m: len([t for t in m.tasks if not t.completed])
+            },
+            agent_reporters={}
+        )
         self.running = True
 
-    def _get_random_free_cell(self):
-        """Находит случайную свободную клетку на карте"""
+    # ----------------------------------------------------------------------
+    def _get_random_free_cell(self) -> Tuple[int, int]:
+        """Возвращает случайную свободную клетку, без препятствий, роботов и задач."""
         while True:
             x = random.randint(0, self.width - 1)
             y = random.randint(0, self.height - 1)
-            # свободная клетка без препятствия и без агента
-            if self.grid_map[y][x] == 0 and not any(isinstance(a, RobotAgent) for a in self.grid.get_cell_list_contents((x, y))):
-                return [x, y]
+            if self.grid_map[y][x] == 0:
+                contents = self.grid.get_cell_list_contents((x, y))
+                # нет роботов и нет задач
+                if not any(isinstance(a, RobotAgent) for a in contents) and \
+                        not any(getattr(a, "agent_type", None) == "task" for a in contents):
+                    return (x, y)
 
+    def _assign_tasks(self):
+        """Назначение задач агентам через MRTA"""
+        if not self.tasks:
+            return
+        if self.mrta_method == "hungarian":
+            assignment = hungarian_assignment(self.agents_list, self.tasks)
+        elif self.mrta_method == "greedy":
+            assignment = greedy_assignment(self.agents_list, self.tasks)
+        elif self.mrta_method == "cbba":
+            assignment = cbba_assignment(self.agents_list, self.tasks)
+        else:
+            raise ValueError(f"Unknown MRTA method: {self.mrta_method}")
+
+        # преобразуем assignment agent_id -> Task объект
+        assignment_obj = assignment_to_tasks(assignment, self.tasks)
+        for ag in self.agents_list:
+            if ag.unique_id in assignment_obj:
+                ag.assign_tasks([assignment_obj[ag.unique_id]])
+
+    def _compute_paths(self):
+        """MAPF для всех агентов"""
+        agent_specs = []
+        for ag in self.agents_list:
+            if ag.goal_task and not ag.finished:
+                agent_specs.append({
+                    "id": ag.unique_id,
+                    "start": list(ag.pos),
+                    "goal": list(ag.goal_task.pos)
+                })
+
+        if not agent_specs:
+            return
+
+        if self.planner == "prioritized":
+            plans = prioritized_planning(self.grid_map, agent_specs, priority=self.pp_priority)
+        elif self.planner == "cbs":
+            plans = cbs(self.grid_map, agent_specs)
+        else:
+            plans = cooperative_a_star(self.grid_map, agent_specs)
+
+        for ag in self.agents_list:
+            if ag.unique_id in plans:
+                ag.path = plans[ag.unique_id]
+                ag.path_step = 0
+                ag.finished = (ag.pos == ag.goal_task.pos)
+
+    # ----------------------------------------------------------------------
     def step(self):
-        """Выполняет один шаг симуляции"""
+        self.datacollector.collect(self)
+
+        # динамические задачи
+        if self.dynamic_tasks and random.random() < self.task_spawn_prob:
+            pos = self._get_random_free_cell()
+            task = Task(len(self.tasks), pos, self)
+            self.tasks.append(task)
+            self.grid.place_agent(task, pos)
+            self._assign_tasks()
+            self._compute_paths()
+
         self.schedule.step()
-        if all(agent.finished for agent in self.agents_list):
-            self.running = False

@@ -1,0 +1,3 @@
+time,step,event,planner,mrta_method,num_agents,num_tasks,soc,makespan,assign_time,notes
+2025-12-11 19:31:44,0,mrta+plan,prioritized,hungarian,4,4,32,8,0.3362,plan_time=0.0002
+2025-12-11 19:31:46,0,mrta+plan,prioritized,hungarian,4,4,32,8,0.0003,plan_time=0.001

@@ -1,88 +1,86 @@
-# Модуль предназначен для запуска графической визуализации модели
-# мультиагентной системы (МАС), реализованной с использованием Mesa.
-
-from mesa.visualization.modules import CanvasGrid
+from mesa.visualization.modules import CanvasGrid, ChartModule, TextElement
 from mesa.visualization.ModularVisualization import ModularServer
-from mesa.visualization.modules import TextElement
-
 from src.model import GridMASModel
+
 
 def agent_portrayal(agent):
     if agent is None:
         return
 
-    # === Препятствия ===
-    if hasattr(agent, "agent_type") and agent.agent_type == "obstacle":
+    if getattr(agent, "agent_type", None) == "obstacle":
         return {
             "Shape": "rect",
+            "Color": "black",
+            "Layer": 0,
             "w": 1.0,
             "h": 1.0,
-            "Filled": "true",
-            "Layer": 0,
-            "Color": "black"
+            "Filled": True
         }
 
-    # === Роботы ===
-    color = "green" if agent.finished else "red"
+    if getattr(agent, "agent_type", None) == "task":
+        return {
+            "Shape": "circle",
+            "r": 0.45,
+            "Filled": True,
+            "Layer": 1,
+            "Color": "yellow",
+            "text": str(agent.task_id),
+            "text_color": "black"
+        }
 
-    return {
-        "Shape": "rect",
-        "w": 0.9,
-        "h": 0.9,
-        "Filled": "true",
-        "Layer": 1,
-        "Color": color,
-        "text": str(agent.unique_id),
-        "text_color": "white"
-    }
+    if hasattr(agent, "goal"):
+        color = "green" if getattr(agent, "finished", False) else "red"
+        return {
+            "Shape": "rect",  # квадратный робот
+            "Color": color,
+            "Layer": 2,
+            "w": 1.0,
+            "h": 1.0,
+            "Filled": True,
+            "text": str(agent.unique_id),
+            "text_color": "white"
+        }
 
 
-class MapInfo(TextElement):
-    """
-        Наименование: MapInfo
-        Назначение:
-            Элемент текстовой визуализации, выводящий информацию о модели
-            (количество агентов и состояние симуляции).
-
-        Входные параметры:
-            отсутствуют.
-
-        Возвращаемое значение:
-            str — текст, отображаемый на панели визуализации.
-    """
+class MetricsText(TextElement):
     def render(self, model):
-        # Строка информации - количество агентов и статус
-        completed = sum(a.finished for a in model.agents_list)
-        total = len(model.agents_list)
+        soc = sum(len(a.path) for a in model.agents_list)
+        makespan = max((len(a.path) for a in model.agents_list), default=0)
+        return (
+            f"Agents: {len(model.agents_list)} | "
+            f"Tasks: {len(model.tasks)} | "
+            f"SoC: {soc} | "
+            f"Makespan: {makespan}"
+        )
 
-        return f"Агенты: {completed}/{total} завершили маршрут"
 
 def build_server():
-    """
-    Создание и конфигурация веб-сервера Mesa
-    с динамическими препятствиями и маршрутами агентов.
-    """
-    grid_canvas = CanvasGrid(
-        agent_portrayal,
-        20,  # ширина сетки
-        15,  # высота сетки
-        600,
-        450
-    )
+    grid_canvas = CanvasGrid(agent_portrayal, 20, 15, 600, 450)
+
+    chart_module = ChartModule([
+        {"Label": "SoC", "Color": "Black"},
+        {"Label": "Makespan", "Color": "Blue"}
+    ])
+
+    metrics_text = MetricsText()
+
+    server_params = {
+        "width": 20,
+        "height": 15,
+        "num_agents": 3,
+        "num_tasks": 10,  # 10 задач
+        "obstacle_prob": 0.18,
+        "planner": "prioritized",
+        "pp_priority": "id",
+        "seed": None,
+        "mrta_method": "hungarian",
+    }
 
     server = ModularServer(
         GridMASModel,
-        [grid_canvas, MapInfo()],
+        [grid_canvas, metrics_text, chart_module],
         "Multi-Agent Grid Simulation",
-        {
-            "width": 20,
-            "height": 15,
-            "num_agents": 3,
-            "obstacle_prob": 0.18,
-            "planner": "prioritized",
-            "pp_priority": "id",
-            "seed": None  # Можно поставить число для фиксированной карты
-        }
+        server_params
     )
 
     server.port = 8521
